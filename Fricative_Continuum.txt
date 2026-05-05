@@ -1,0 +1,2630 @@
+#=======================================================#
+# Make fricative continuum
+# Version 84
+#
+# May 5, 2026
+
+form fricative continuum parameters
+    choice method 1
+        option start from sound in the list
+        option just make fricatives
+        option use or modify existing parameter table
+        option initialize a table template to save
+
+    	real number_of_continuum_steps 7
+
+    choice initialize_phonetic_contrast 1
+        option start with sh-s parameters
+        option start with sh-ch parameters
+
+    optionmenu spectral_shape 1
+        option contoured
+        option sloped
+endform
+
+#=============================================#
+#
+# convert startup option choices to variables,
+# set basic variables needed later
+    call set_options
+
+#=============================================#
+
+if method$ != "use or modify existing parameter table"
+    # This is the MAIN use case for the script,
+    # hence the more-detailed code layout in this section. 
+    #
+    # establish spectrum shape parameters
+    call user_choose_spectrum_parameters
+        # initializes: default_sh_peak_resonance, default_s_peak_resonance
+        # if sloped, also: peak_resonance_slope_sh, peak_resonance_slope_s
+        #
+        # also initializes: extra_detail_label$
+
+    call calculate_spectral_shape
+        # this is the main function that determines the spectral shape,
+        # setting a relative intensity for each resonance
+        # (but the frequency of each resonance is set later)
+
+    call user_choose_fricative_position
+        # initializes: position$ (e.g. position$ = "onset")
+
+    call initialize_timing_parameters
+        # modify timing defaults based on word position and phonetic contrast 
+    
+    # Get the vocal tract resonance information
+    # (as long as you aren't just making fricatives de novo)
+    if method$ != "just make fricatives"
+        call user_choose_vowel_from_object
+            # yields samplerate, part_after_vowel$ / part_before_vowel$ / 
+            # orig_sound_label$ / orig_sound_label2$
+        call analyze_vowel
+        # yields f2_frequency, f3_frequency, intensity_F3, samplerate, vowel_intensity
+        # this will determine the resonance-to-frequency mapping.
+    else
+        # no vowel selected
+        # user will need to manually choose formant frequencies
+        # in the later step 
+        user_set_F3 = 1
+        orig_sound_label$ = ""
+        orig_sound_label2$ = ""
+        sep$ = ""
+        position$ = "none"
+    endif
+
+    call calculate_fricative_intensity_gain
+        # based on vowel intensity 
+        # initializes: start_raise_db_by, end_raise_db_by
+
+    call user_set_continuum_parameters
+
+    # create table of all parameters for continuum endpoints
+    call make_endpoint_table
+    
+    #=============================================#
+
+elsif method$ == "use or modify existing parameter table"
+        user_modify = 1
+
+    # override param shorthand details
+        extra_detail_label$ = ""
+
+    beginPause: "use or modify existing parameter table"
+        comment: "Where is your endpoint table ?"
+            choice: "where_is_the_endpoint_table", 1
+            option: "table is currently in the object list"
+            option: "I need to call it up into the list (read CSV)"
+    endPause: "continue",1
+
+    if where_is_the_endpoint_table == 1        
+        pause select the ENDPOINT table that you want to use
+        Copy: "endpoint_table_orig"
+
+    elsif where_is_the_endpoint_table == 2
+        table_filename$ = chooseReadFile$: "Open an ENDPOINT table file (csv)"
+        Read Table from comma-separated file: table_filename$
+        Copy: "endpoint_table_orig"
+    endif
+
+    endpoint_table_object_index = selected("Table")
+    call modify_current_endpoint_table
+    call check_valid_durations
+
+endif
+
+#=====================================================#
+#
+# Verify that necessary columns exist in the parameter ENDPOINT table
+    call verify_parameter_table endpoint_table_object_index
+
+# Make a new FULL table, interpolating between endpoints
+    call interpolate_endpoint_table
+
+#=====================================================#
+# if all you are doing is producing a table,
+# then name/save it, and then exit the script before producing and sounds & images.
+if method$ == "initialize a table template to save"
+    # determine generic output name
+    if initialized_contrast$ = "sh-s"
+        endpoint_table_name$ = "endpoint_table_sh_s.csv"
+    elsif initialized_contrast$ = "sh-ch"
+        endpoint_table_name$ = "endpoint_table_sh_ch.csv"
+    endif
+
+    filename$ = chooseWriteFile$: "Save as...", endpoint_table_name$
+        Save as comma-separated file: filename$
+        print 'newline$'
+        print file saved as: 'filename$'
+        pause Done. See Praat Info window for location of the saved file 
+        exitScript()
+endif
+
+#========================================================================================
+#
+#                          PRODUCE THE SOUND OUTPUTS
+#
+#========================================================================================
+#======================================================
+#=================================
+#====================
+#============
+#=======
+#====
+#==
+#=
+#
+#=====================================================#
+#
+#       FIRST GENERATE THE ORIGINAL WHITE NOISE TO FILTER
+#
+    selectObject: "Table table"
+    max_duration = Get maximum: "duration"
+    Create Sound from formula: "base_noise", 1, 0, max_duration, samplerate, "randomGauss(0,0.1)"
+    # assign it to this variable name (to be used later)
+    premade_noise$ = "base_noise"
+
+#=====================================================#
+#
+#       MAKE EACH CONTINUUM STEP
+#
+# loop through the rows,
+# extracting values for each step
+for step from 1 to num_steps
+    #
+    # first obtain the parameter values for this continuum step
+    selectObject: "Table table"
+    for peak from 1 to num_peaks
+        .peak_freq_'peak' = Get value: step, "peak_freq_'peak'"
+        .peak_int_'peak' = Get value: step, "peak_int_'peak'"
+        .peak_db_oct_'peak' = Get value: step, "peak_db_oct_'peak'"
+    endfor
+    .duration = Get value: step, "duration"
+    .risetime = Get value: step, "risetime"
+    .falltime = Get value: step, "falltime"
+    .closure_duration = Get value: step, "closure_duration"
+    .raise_db_by = Get value: step, "raise_db_by"
+
+    #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^#
+    #
+    # using those values, 
+    # filter the noise into the fricative for each continuum step
+    #
+    call make_fricative samplerate .duration .risetime .falltime .closure_duration 
+        ... .peak_freq_1 .peak_freq_2 .peak_freq_3 .peak_freq_4 .peak_freq_5 .peak_freq_6 .peak_freq_7 .peak_freq_8 
+        ... .peak_int_1 .peak_int_2 .peak_int_3 .peak_int_4 .peak_int_5 .peak_int_6 .peak_int_7 .peak_int_8 .raise_db_by 
+        ... .peak_db_oct_1 .peak_db_oct_2 .peak_db_oct_3 .peak_db_oct_4 .peak_db_oct_5 .peak_db_oct_6 .peak_db_oct_7 .peak_db_oct_8 
+        ... new_noise_per_step 'premade_noise$'
+    #    
+    #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^#
+
+    # rename the output
+    select Sound output
+    Rename: "step_'step'"
+endfor
+
+#=====================================================#
+#
+#    DRAW THE OUTPUT SPECTRA
+
+    call set_range_for_drawing
+    call draw_spectra
+#
+# qqq note: if creating sh-ch continuum, perhaps it's better to draw the envelopes
+# instead of the spectra 
+# e.g. draw the spectrum of a single endpint sitmulus on the vowel in the bottom section,
+# and draw a series of envelopes in the top section
+#=====================================================#
+#
+#     APPEND THE VOWEL
+#
+if method$ == "start from sound in the list"
+    # add the vowel that the user selected earlier
+    call append_vowel
+    call draw_spectra_w_vowel
+    call concatenate_and_present
+
+else
+    if method$ == "just make fricatives"
+        # assemble the continuum
+        call concatenate_and_present
+        # script is done
+    else
+        # all of the other methods (e.g. modifying a pre-existing parameter table)
+        #
+        # add a vowel that was not part of the process 
+        # of generating the fricatives at run-time. 
+        # ** We actually want to warn against this,
+        # because if your vowel doesn't match the spectral properties (i.e. F3)
+        # of the parameters that were used to make the fricative,
+        # then it could sound like an unnatural splicing of two different voices. 
+        # (that's the problem we're trying to avoid with this script)
+            call add_vowel_with_warning
+    endif
+endif
+
+# Rename the table if you chose to modify it
+if method$ == "use or modify existing parameter table"
+    select Table table
+endif
+
+call assemble_table_output_name
+
+# offer option to save the output files
+call set_save_path_and_save
+
+# END of main script structure
+#
+#
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%%%%%%%%%
+#%%%%%%%%%%%
+#%%%%%%%
+#%%%%
+#%%
+#%
+#
+#
+#
+# MAKE FRICATIVE SUPERPROCEDURE
+#
+procedure make_fricative .samplerate .duration .risetime .falltime .closure_duration 
+    ... .peak_freq_1 .peak_freq_2 .peak_freq_3 .peak_freq_4 .peak_freq_5 .peak_freq_6 .peak_freq_7 .peak_freq_8 
+    ... .peak_int_1 .peak_int_2 .peak_int_3 .peak_int_4 .peak_int_5 .peak_int_6 .peak_int_7 .peak_int_8 .raise_db_by 
+    ... .peak_db_oct_1 .peak_db_oct_2 .peak_db_oct_3 .peak_db_oct_4 .peak_db_oct_5 .peak_db_oct_6 .peak_db_oct_7 .peak_db_oct_8 
+    ... .new_noise .premade_noise$
+
+    # qqq NOTE: eventually want to change this procedure
+    # so that it will accept an arbitrary number of spectral peaks
+    # rather than just 8. 
+    # or perhaps accept as an input a big array of non-determinate size, 
+    # holding all the values that would be passed on. 
+
+    clearinfo
+    #=======================================================================#
+    # establish the noise that will be filtered for this fricative
+    if .new_noise == 1
+        # create broadband noise to filter
+        Create Sound from formula: "x_temp_noise", 1, 0, .duration, .samplerate, "randomGauss(0,0.1)"
+
+    else 
+        nocheck select Sound '.premade_noise$'
+        num_selected = numberOfSelected ("Sound")
+        if num_selected == 0
+            exitScript: "Instruction to use '.premade_noise$' failed. Does '.premade_noise$' exist?"
+        elsif num_selected > 1
+            exitScript: "You can only choose ONE sound to use as the base to filter"
+        endif
+        using_single_noise = 1
+        #
+        # extract the duration needed from the existing sound
+        select Sound 'premade_noise$'
+        Extract part: 0, .duration, "rectangular", 1, "no"
+        Rename: "x_temp_noise"
+    endif
+
+    #=======================================================================#
+    # Make each of the peaks
+    for this_peak from 1 to num_peaks
+        # calculate target peak intensity for this peak
+        target_frequency = .peak_freq_'this_peak'
+        target_peak_intensity = .peak_int_'this_peak' + .raise_db_by
+        
+        select Sound x_temp_noise
+
+        #=======================================================================#
+        # filter the sound around the center frequency
+            call filter_octave_rolloff x_temp_noise 
+                ... .peak_freq_'this_peak' 
+                ... .peak_db_oct_'this_peak'
+                ... peak_'this_peak'
+
+        #=======================================================================#
+        # obtain intensity at the peak frequency
+            select Sound peak_'this_peak'
+            To Spectrum: "yes"
+            Rename: "temp"
+            # use this smoothing parameter only for obtaining an estimate
+            # of the spectral peak intensity (not for drawing)
+            Cepstral smoothing: peak_dB_smoothing
+            Rename: "smoothed_spectrum"
+            peak_intensity = Get sound pressure level of nearest maximum: target_frequency
+
+            diff_in_dB = target_peak_intensity - peak_intensity
+
+        #=======================================================================#
+        # adjust intensity overall so that theat frequency peak is at target level
+            select Sound peak_'this_peak'
+            Multiply... 10^(diff_in_dB/20)
+
+        # cleanup
+            select Spectrum temp
+            plus Spectrum smoothed_spectrum
+            Remove
+
+        #=======================================================================#
+        # create exponential curve for amplitude envelope
+        .power = 1
+        call apply_envelope peak_'this_peak' .risetime .falltime .power
+
+    # end this specific spectral peak
+    endfor
+
+    #=======================================================================#
+    # put all the peaks together
+        select Sound peak_1
+        Copy: "output_to_HPF"
+        for this_peak from 2 to num_peaks
+            Formula... self[col] + Sound_peak_'this_peak'[col]
+        endfor
+
+    # High-pass filter the output
+    # to remove super low-frequency interaction components
+    # that result from the envelope
+        select Sound output_to_HPF
+        Filter (stop Hann band): 0, 40, 50
+        Rename: "output"
+
+    # preappend closure duration if in medial or offset position 
+        if .closure_duration > 0
+            # create silence gap
+            # copy output to place later in list
+            # concatenate silence and output
+            # remove those intermediate parts
+            # rename newly concatenated part as output
+            Create Sound from formula: "closure", 1, 0, .closure_duration, samplerate, "0"
+
+            select Sound output
+            Rename: "to_remove"
+            Copy: "temp"
+            plus Sound closure
+            Concatenate
+            Rename: "output"
+
+            select Sound to_remove
+            plus Sound temp
+            plus Sound closure
+            Remove
+        endif
+
+    #=======================================================================#
+    # cleanup
+        select Sound peak_1
+        for this_peak from 2 to num_peaks
+            plus Sound peak_'this_peak'
+        endfor
+        plus Sound output_to_HPF
+        Remove
+
+    # cleanup the noise that was filtered
+        select Sound x_temp_noise
+        Remove
+
+    select Sound output
+endproc
+
+#
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+#
+#
+#                        SUB-PROCEDURES
+#
+#
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+procedure round_up value round_to
+    .value_round = value + (round_to - value mod round_to)
+endproc
+
+procedure filter_octave_rolloff .name$ .cf .rolloff.per.octave .newname$
+   select Sound '.name$'
+   Filter (formula)...  if x > 0 then self*10^(-(abs((log10(x/.cf)/log10(2)))*.rolloff.per.octave)/20) else self fi
+   Rename: "'.newname$'"
+endproc
+
+procedure set_save_path_and_save
+    beginPause: "Save output objects"
+        comment: "Do you want to save the output files?"
+        choice: "save_outputs", 1
+            option: "No"
+            option: "Yes - open up a folder selection tool"
+            option: "Yes - I will type the file path directly"
+    endPause: "continue",1
+
+    # offer option to save the output objects
+    if save_outputs == 1
+        # do nothing (user doesn't want to save anything)
+        exitScript()
+
+    #-------------------------------------------#
+    #                                           #
+    #         choose parent folder              #
+    #                                           #
+    #-------------------------------------------#
+
+    elsif save_outputs == 2
+        # "Yes - open up a folder selection tool"
+        output_parent_folder$ = chooseDirectory$: "Choose a directory"
+
+    elsif save_outputs == 3
+        # "Yes - I type the file path directly"
+        beginPause: "enter folder path to save files"
+            comment: "parent path (folder that already exists)"
+            sentence: "output_parent_folder",  "C:/Praat"
+            comment: " ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
+        
+            #comment: "name for new sub-folder"
+            #comment: "within that path"
+            #comment: "where the new files will be saved:"
+            #sentence: "subfolder_name", "script_outputs"
+        endPause: "continue",1
+
+        # check to ensure that the user's entered folder actually exists
+        folder_exists = folderExists (output_parent_folder$)
+
+        # if that wasn't a valid path, 
+        # try again (let the user choose the path again) until it is valid
+        while folder_exists == 0
+            # offer another opportunity to type it in
+            beginPause: "enter folder path to save files"
+                comment: "parent path (folder that already exists)"
+                comment: " ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
+                comment: "folder" 
+                comment: " 'output_parent_folder$' "
+                comment: "as you just typed"
+                comment: "was not found (typo?)"
+                comment: "try again:"
+                sentence: "output_parent_folder",  output_parent_folder$
+                comment: " ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
+            
+                #comment: "name for new sub-folder"
+                #comment: "within that path"
+                #comment: "where the new files will be saved:"
+                #sentence: "subfolder_name", "script_outputs"
+            endPause: "continue",1
+
+            # re-check folder to see if it exists
+            folder_exists = folderExists (output_parent_folder$)
+        endwhile
+    endif
+
+    #-------------------------------------------#
+    #                                           #
+    #            choose sub-folder              #
+    #                                           #
+    #-------------------------------------------#
+    beginPause: "enter sub-folder path to save files"
+        comment: "parent path (already exists):"
+        comment: "'output_parent_folder$'"
+        comment: " ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ "
+    
+        comment: "name for new SUB-folder"
+        comment: "within that path"
+        comment: "where the new files will be saved:"
+        sentence: "subfolder_name", "script_outputs"
+    endPause: "continue",1
+
+    # check to ensure that the sub-folder does NOT already exist
+    subfolder_full_path$ = "'output_parent_folder$'/'subfolder_name$'"
+    folder_exists = folderExists (subfolder_full_path$)
+
+    while folder_exists == 1
+        beginPause: "Warning: folder already exists"
+            comment: "your output sub-folder already exists"
+            comment: "Please enter a name for the sub-folder"
+            comment: "that does not already exist"
+            sentence: "subfolder_name", subfolder_name$
+        endPause: "continue",1
+        subfolder_full_path$ = "'output_parent_folder$'/subfolder_name$'"
+        folder_exists = folderExists (subfolder_full_path$)
+    endwhile
+
+    call save_script_outputs 'output_parent_folder$' 'subfolder_name$'
+endproc
+
+procedure save_script_outputs parent_path$ sub_path$
+    # make the paths 
+        createFolder: "'parent_path$'/'sub_path$'"
+        createFolder: "'parent_path$'/'sub_path$'/original_objects"
+        createFolder: "'parent_path$'/'sub_path$'/isolated_fricatives"
+        createFolder: "'parent_path$'/'sub_path$'/continuum"
+
+    # save original sounds
+    if position$ != "none"
+        selectObject: "Sound 'orig_sound_label$'"
+        Save as WAV file: "'parent_path$'/'sub_path$'/original_objects/'orig_sound_label$'.wav"
+    endif
+
+    # this name will change depending on fricative position
+    if position$ == "onset" or position$ == "medial"
+        selectObject: "Sound part_after_fricative"
+        Save as WAV file: "'parent_path$'/'sub_path$'/original_objects/part_after_fricative.wav"
+    elsif position$ == "offset"
+        selectObject: "Sound part_before_fricative"
+        Save as WAV file: "'parent_path$'/'sub_path$'/original_objects/part_before_fricative.wav"
+    endif
+
+    # save the basic filtered noise
+        selectObject: "Sound base_noise"
+        Save as WAV file: "'parent_path$'/'sub_path$'/original_objects/base_noise.wav"
+
+    # save the continuum steps
+    nocheck selectObject: "null"
+    for step_index from 1 to num_steps
+        selectObject: "Sound step_'step_index'"
+        Save as WAV file: "'parent_path$'/'sub_path$'/isolated_fricatives/step_'step_index'.wav"
+        selectObject: "Sound step_'step_index''sep$''orig_sound_label$'"
+        Save as WAV file: "'parent_path$'/'sub_path$'/continuum/step_'step_index''sep$''orig_sound_label$'.wav"
+
+    endfor
+
+    # save the assembled continuum
+        selectObject: "Sound chain"
+        Save as WAV file: "'parent_path$'/'sub_path$'/continuum.wav"
+        selectObject: "TextGrid chain"
+        Save as text file: "'parent_path$'/'sub_path$'/continuum.TextGrid"
+
+    # save the generic-named tables
+        selectObject: "Table endpoint_table"
+        Save as comma-separated file: "'parent_path$'/'sub_path$'/endpoint_table.csv"
+        selectObject: "Table table"
+        Save as comma-separated file: "'parent_path$'/'sub_path$'/table.csv"
+
+    # save the custom-named tables
+    if detailed_table_name_output == 1
+        selectObject: "Table endpoint_table'extra_detail_table_name_suffix$'"
+        Save as comma-separated file: "'parent_path$'/'sub_path$'/endpoint_table'extra_detail_table_name_suffix$'.csv"
+        selectObject: "Table table'extra_detail_table_name_suffix$'"
+        Save as comma-separated file: "'parent_path$'/'sub_path$'/table'extra_detail_table_name_suffix$'.csv"
+    endif
+
+    # save the images
+        Select outer viewport: 0, 6.5, 4.5, 9
+        Save as 300-dpi PNG file: "'parent_path$'/'sub_path$'/Spectrum_endpoints_on_vowel.png"
+        Select outer viewport: 0, 6.5, 0, 4.5
+        Save as 300-dpi PNG file: "'parent_path$'/'sub_path$'/Spectrum_continuum_all_steps.png"
+endproc
+
+procedure add_vowel_with_warning
+    beginPause: "add vowel?"
+        comment: "WARNING:"
+        comment: "If you append a vowel that wasn't used to generate these fricative parameters,"
+        comment: "then the fricatives could sound unnatural in context."
+        comment: "So appending a vowel is NOT recommended unless you're appending the exact vowel"
+        comment: "that was used to generate the resonance frequencies in this table."
+        comment: ""
+        choice: "add_vowel", 1
+            option: "no"
+            option: "yes - add sound (vowel) after the fricative"
+            option: "yes - add sound (vowel) before the fricative"
+            option: "yes - put fricative between two sounds"
+    clicked = endPause: "continue",1
+    
+    if add_vowel$ == "no"
+        position$ = "none"
+        orig_sound_label$ = ""
+        sep$ = ""
+
+    elsif add_vowel$ == "yes - add sound (vowel) after the fricative"
+        position$ = "onset"
+        call onset_timing_defaults
+
+    elsif add_vowel$ == "yes - add sound (vowel) before the fricative"
+        position$ = "offset"
+        call offset_timing_defaults
+
+    elsif add_vowel$ == "yes - put fricative between two sounds"
+        position$ = "medial"
+        call medial_timing_defaults
+    endif
+    
+    # Append the vowel, assemble the continuum,
+    if position$ != "none"
+        call user_choose_vowel_from_object
+        call append_vowel
+        call draw_spectra_w_vowel
+        call concatenate_and_present
+        # script is done
+    endif
+endproc
+
+procedure assemble_table_output_name
+    if detailed_table_name_output == 1
+        # don't apply this step if you modified the table manually,
+        # because then the shorthand parameters
+        # cannot be guaranteed to still be true. 
+        if method$ != "use or modify existing parameter table"
+            if spectral_shape$ == "sloped"
+                extra_detail_table_name_suffix$ = "'sep$''orig_sound_label$'_'default_sh_peak_resonance'_'peak_resonance_slope_sh'_to_'default_s_peak_resonance'_'peak_resonance_slope_s'"
+            elsif spectral_shape$ == "contoured"
+                extra_detail_table_name_suffix$ = "'sep$''orig_sound_label$'_'default_sh_peak_resonance'_cont_to_'default_s_peak_resonance'_cont"
+            endif
+
+            select Table endpoint_table
+            Copy: "endpoint_table'extra_detail_table_name_suffix$'"
+
+            select Table table
+            Copy: "table'extra_detail_table_name_suffix$'"
+        else
+            extra_detail_table_name_suffix$ = ""
+
+        endif
+    endif
+endproc
+
+procedure concatenate_and_present
+    # concatenate and view the continuum
+        if position$ != "medial"
+            select Sound step_1'sep$''orig_sound_label$''extra_detail_label$'
+            for step from 2 to num_steps
+                plus Sound step_'step''sep$''orig_sound_label$''extra_detail_label$'
+            endfor
+
+        elsif position$ == "medial"
+            # if you selected the onbset & offset parts from the same object,
+            # be sure to not expect a second object name in the ouput
+                if orig_sound_label$ == orig_sound_label2$
+                    select Sound step_1'sep$''orig_sound_label$''extra_detail_label$'
+                    for step from 2 to num_steps
+                        plus Sound step_'step''sep$''orig_sound_label$''extra_detail_label$'
+                    endfor
+                else
+                    # if you did select from two separate objects,
+                    # incorporate both of those object names in the selection
+                    select Sound step_1'sep$''orig_sound_label$'_'orig_sound_label2$''extra_detail_label$'
+                    for step from 2 to num_steps
+                        plus Sound step_'step''sep$''orig_sound_label$'_'orig_sound_label2$''extra_detail_label$'
+                    endfor
+                endif
+        endif
+
+        Concatenate recoverably
+
+        # call it up to view, if there aren't too many steps
+        if num_steps < 12
+            View & Edit
+            editor TextGrid chain
+            Spectrogram settings: 0, 8000, 0.005, 50
+            
+            # turn formants off 
+            Show analyses... yes no no no no 10
+            endeditor
+        endif
+endproc
+
+procedure calculate_fricative_intensity_gain
+    if method$ == "start from sound in the list"
+        # calcualte fricative intensity gain
+        # based on the intensity of the adjacent vowel
+        if initialized_contrast$ == "sh-s"
+            # start is sh, end is s
+            #
+            # sh is sometimes slightly higher in intensity 
+            start_raise_db_by = (vowel_intensity*0.88) - 35
+
+            # s slightly different intensity
+            end_raise_db_by = (vowel_intensity*0.88) - 33
+
+        elsif initialized_contrast$ == "sh-ch"
+            # start is sh, end is ch
+            start_raise_db_by = (vowel_intensity*0.88) - 35
+            # ch (end) has more energy because of the buildup of pressure behind the closure
+            end_raise_db_by = (vowel_intensity*0.88) - 30
+        endif
+
+    elsif method$ == "just make fricatives" or method$ == "initialize a table template to save" 
+        # no vowel to guide this value,
+        # just initialize a gain value
+        # (user will get the opportunity to change it if they desire)
+            if initialized_contrast$ == "sh-s"
+                start_raise_db_by = 28
+                end_raise_db_by = 30
+            elsif initialized_contrast$ == "sh-ch"
+                start_raise_db_by = 28
+                end_raise_db_by = 33
+            endif
+    endif
+
+    # round the number to an integer
+    start_raise_db_by = 'start_raise_db_by:0'
+    end_raise_db_by   = 'end_raise_db_by:0'
+
+    endif
+endproc
+
+procedure apply_envelope .name$ .risetime .falltime .power
+	select Sound '.name$'
+	.start = Get start time
+	.end = Get end time
+	Formula... if x < '.risetime' 
+		...then self * ((cos((x-('.risetime' - '.start'))/'.risetime' * pi/2))^'.power')
+		...else self endif  
+	
+	Formula... if x > '.end' - '.falltime'  
+		...then self * cos((x-('.end' - '.falltime'))/'.falltime' * pi/2)
+		...else self endif
+endproc
+
+procedure verify_parameter_table endpoint_table_object_index
+    # This procedure checks the existence of each necessary column name
+    # by obtaining the index of each.
+    # If any of the columns don't exist, it will return a zero,
+    # and the product of the indices will be zero. 
+    # That is the red flag for an incomplete starting table. 
+    #
+    col_names$# = {"step", "peak_freq_1", "peak_freq_2", "peak_freq_3", "peak_freq_4", "peak_freq_5", "peak_freq_6", "peak_freq_7", "peak_freq_8", "raise_db_by", 
+    ... "peak_int_1", "peak_int_2", "peak_int_3", "peak_int_4", "peak_int_5", "peak_int_6", "peak_int_7", "peak_int_8", 
+    ... "peak_db_oct_1", "peak_db_oct_2", "peak_db_oct_3", "peak_db_oct_4", "peak_db_oct_5", "peak_db_oct_6", "peak_db_oct_7", "peak_db_oct_8", "duration", "risetime", "falltime",
+    ... "closure_duration"}
+
+    length_col_names = size(col_names$#)
+    col_index_product = 1
+    # initialize column error list
+    # (this will accumulate as a list of colummns that are missing,
+    # to help the user identify what needs to be added)
+    col_error$ = ""
+
+    for col_name_index from 1 to length_col_names
+        col_name$ = col_names$#[col_name_index]
+
+        # select Table '.endpoint_table$'
+        select endpoint_table_object_index
+        col_index = Get column index: col_name$
+
+        # if that column was not found,
+        # it will return a value of zero.
+        # update a running string that names it
+        if col_index == 0
+            col_error$ = col_error$ + col_name$ + ", " 
+        endif
+        # multiply the positional indices of all the columsn that are found.
+        # if there is any necessary column that wasn't found,
+        # then this product will be zero. 
+        # (the /6 is just to make sure the product 
+        # doesn't spin completely out of control)        
+        col_index_product = col_index_product*col_index/6
+
+    endfor
+
+    # if col_index_product == 0, then something is missing
+    # Tell the user what is missing. 
+    if col_index_product == 0
+    col_error$ = col_error$ - ", "
+        beginPause: "Error on table verification"
+        comment: "This table doesn't have all of the necessary columns"
+        comment: "Needs: step, peak_freq_1, peak_freq_2, peak_freq_3, ..., peak_freq_8"
+        comment: "peak_int_1, peak_int_2, peak_int_3, ... peak_int_8,"
+        comment: "peak_db_oct_1, peak_db_oct_2, peak_db_oct_3, ... peak_db_oct_8,"
+        comment: "raise_db_by, duration, risetime, falltime, closure_duration"
+        comment: ""
+        comment: "MISSING COLUMNS: 'col_error$'"
+        clicked = endPause: "Exit","Ugh",2
+        exitScript()
+    endif
+endproc
+
+procedure user_set_continuum_parameters
+    #--------------------------------------------------------------------------------#
+    #
+    #    timing properties for the START of the continuum (usually the SH end)
+    #
+    beginPause: "Fricative continuum STARTPOINT settings"
+        comment: "START parameters (usually for 'sh')"
+        positive: "num_steps", num_steps
+        if user_set_F3 == 1
+            real: "f2_frequency", 1700
+            real: "f3_frequency", 2600
+        endif
+        comment: ""
+        real:    "start_duration_s", default_start_duration_s
+        real:    "start_risetime_s", default_start_risetime_s
+        real:    "start_falltime_s", default_start_falltime_s
+        real:    "start_closure_duration_s", default_start_closure_duration_s
+        comment: ""
+        comment: "Add this to the peak dB values (calculated based on vowel intensity)"
+        real: "start_dB_add_to_all_peak_levels", start_raise_db_by
+        comment: ""
+        boolean: "set_indiv_peak_intensities", 0
+        boolean: "set_indiv_peak_slopes", 0
+    endPause: "Continue",1
+
+    # convert user-friendly form name into cleaner variable name
+    start_raise_db_by = start_dB_add_to_all_peak_levels
+
+    # user pop-up to set individual peak intensities for SH
+    if set_indiv_peak_intensities == 1
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "peak intensities (F3 is peak for 'sh')"
+            comment: "Based on your previous input:"
+            comment: "these intensities fall from the main peak at a rate of 'peak_resonance_slope_sh' dB per resonance"
+            comment: "(progressing upward in frequency away from the peak)"
+            comment: "0 refers to the peak value,"
+            comment: "with 'start_raise_db_by' dB added to all of these values"
+            comment: ""
+            # fill out the entire list of 8 spectral peak intensities in the form
+            for peak_num from 1 to num_peaks
+                real: "start_peak_int_'peak_num'",  default_start_peak_int_'peak_num'
+            endfor
+        endPause: "continue", 1
+
+    else
+        # assign peak intensities automatically
+        # based on previously initiated values
+            for peak_num from 1 to num_peaks
+                start_peak_int_'peak_num' = default_start_peak_int_'peak_num'
+            endfor
+    endif
+    
+    # initialize
+    inherit_into_other_continuum_endpoint = 1
+    if set_indiv_peak_slopes == 1
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "peak peakiness (dB/octave)"
+            for peak_num from 1 to num_peaks
+                real: "start_peak_db_oct_'peak_num'",  default_start_peak_db_oct_'peak_num'
+            endfor
+            boolean: "inherit_into_other_continuum_endpoint", inherit_into_other_continuum_endpoint
+        endPause: "continue", 1
+    else
+        # set automatically
+        for peak_num from 1 to num_peaks
+            start_peak_db_oct_'peak_num' =  default_start_peak_db_oct_'peak_num'
+        endfor
+    endif
+
+    #---------------------------------------------------------------------------#
+    #
+    #        timing properties for the END of the continuum (usually the S end)
+    #
+    beginPause: "Fricative continuum ENDPOINT settings"
+        comment: "END parameters (usually for /s/ or 'ch')"
+        
+        comment: ""
+        # previous method: inherit duration info from previous form
+        # now: disabled that inheritance,
+        # because it interfered with sh-ch settings and other options
+        if initialize_phonetic_contrast$ == "start with sh-ch parameters"
+            real: "end_duration_s", default_end_duration_s
+            real: "end_risetime_s", default_end_risetime_s
+            real: "end_falltime_s", default_end_falltime_s
+            real: "end_closure_duration_s", default_end_closure_duration_s
+        else
+            # inherit the timing properties from the previous entry page
+            # i.e. the timing properties for sh-s 
+            # should be the same across the continuum
+            real: "end_duration_s", start_duration_s
+            real: "end_risetime_s", start_risetime_s
+            real: "end_falltime_s", start_falltime_s
+            real: "end_closure_duration_s", start_closure_duration_s
+        endif
+
+        comment: ""
+        comment: "Add this to the peak dB values (calculated based on vowel intensity)"
+        real: "end_dB_add_to_all_peak_levels", end_raise_db_by
+
+        comment: ""
+        boolean: "set_indiv_peak_intensities", set_indiv_peak_intensities
+        boolean: "set_indiv_peak_slopes", set_indiv_peak_slopes
+    end_parameters_set = endPause: "Continue",1
+    
+    # convert user-friendly form name into cleaner variable name
+    end_raise_db_by = end_dB_add_to_all_peak_levels
+
+    #---------------------------------------------------------------------------------------#
+    #
+    #           user pop-up to set individual peak intensities
+    #
+    if set_indiv_peak_intensities == 1
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "peak intensities"
+            comment: "F3 is the peak for 'sh'"
+            comment: "F6, or F7 are typical peaks for /s/"
+            comment: "Based on your previous input:"
+            comment: "these intensities fall from the main peak at a rate of 'peak_resonance_slope_s' dB per resonance"
+            comment: "(moving downward in frequency away from the peak)"
+            comment: "0 refers to the peak value,"
+            comment: "with 'end_raise_db_by' dB added to all of these values in the output"
+            comment: ""
+            for peak_num from 1 to num_peaks
+                real: "end_peak_int_'peak_num'",  default_end_peak_int_'peak_num'
+            endfor
+        endPause: "continue",1
+    else
+        # assign peak intensities automatically
+            for peak_num from 1 to num_peaks
+                end_peak_int_'peak_num' = default_end_peak_int_'peak_num'
+            endfor
+    endif
+
+    if set_indiv_peak_slopes == 1
+        # first inherit user intput from the start of the continuum
+        if inherit_into_other_continuum_endpoint
+            for peak_num from 1 to num_peaks
+                default_end_peak_db_oct_'peak_num' =  start_peak_db_oct_'peak_num'
+            endfor
+        endif
+
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "peak peakiness (dB/octave)"
+            for peak_num from 1 to num_peaks
+                real: "end_peak_db_oct_'peak_num'",  default_end_peak_db_oct_'peak_num'
+            endfor
+        endPause: "continue",1
+    else
+        # If the user didn't specify them directly,
+        # then keep those values at defaults
+        for peak_num from 1 to num_peaks
+            end_peak_db_oct_'peak_num' =  default_end_peak_db_oct_'peak_num'
+        endfor
+    endif
+
+    # check for valid risetime / falltime
+    call check_valid_durations
+endproc
+
+procedure check_valid_durations
+    if start_risetime_s > start_duration_s
+        start_risetime_s = start_duration_s
+        beginPause: "parameter changed"
+            comment: "for START of continuum,"
+            comment: "user requested risetime of 'start_risetime_s' "
+            comment: " but this is shorter than overall fricative duration of 'start_duration_s'"
+            comment: "as a result, risetime was decreased to 'start_duration_s' "
+        endPause: "ok",1
+    endif
+    if start_falltime_s > start_duration_s
+        start_falltime_s = start_duration_s
+        beginPause: "parameter changed"
+            comment: "for START of continuum,"
+            comment: "user requested falltime of 'start_falltime_s' "
+            comment: " but this is shorter than overall fricative duration of 'start_duration_s'"
+            comment: "as a result, risetime was decreased to 'start_duration_s' "
+        endPause: "ok",1
+    endif
+    if end_risetime_s > end_duration_s
+        end_risetime_s = end_duration_s
+        beginPause: "parameter changed"
+            comment: "for END of continuum,"
+            comment: "user requested falltime of 'end_risetime_s' "
+            comment: " but this is shorter than overall fricative duration of 'end_duration_s'"
+            comment: "as a result, falltime was decreased to 'end_duration_s' "
+        endPause: "ok",1
+    endif
+    if end_falltime_s > end_duration_s
+        end_falltime_s = end_duration_s
+                beginPause: "parameter changed"
+            comment: "for END of continuum,"
+            comment: "user requested falltime of 'end_falltime_s' "
+            comment: " but this is shorter than overall fricative duration of 'end_duration_s'"
+            comment: "as a result, falltime was decreased to 'end_duration_s' "
+        endPause: "ok",1
+    endif
+endproc
+
+procedure vocal_tract_resonances .f3
+    # speed of sound in centimeters per second
+    # in a relatively warm room
+    .c = 34300
+    # estimate vocal tract length in centimeters
+    .vtl = .c/(4*(.f3/5))
+
+    .f1 = .c/(4*.vtl)
+    .f2 = .c/(4*.vtl/3)
+    #
+    .f4 = .c/(4*.vtl/7)
+    .f5 = .c/(4*.vtl/9)
+    .f6 = .c/(4*.vtl/11)
+    .f7 = .c/(4*.vtl/13)
+    .f8 = .c/(4*.vtl/15)
+endproc
+
+procedure make_endpoint_table
+    col_names$# = {"step", "peak_freq_1", "peak_freq_2", "peak_freq_3", "peak_freq_4", "peak_freq_5", "peak_freq_6", "peak_freq_7", "peak_freq_8", 
+        ... "peak_int_1", "peak_int_2", "peak_int_3", "peak_int_4", "peak_int_5", "peak_int_6", "peak_int_7", "peak_int_8", "raise_db_by", 
+        ... "peak_db_oct_1", "peak_db_oct_2", "peak_db_oct_3", "peak_db_oct_4", "peak_db_oct_5", "peak_db_oct_6", "peak_db_oct_7", "peak_db_oct_8","duration", "risetime", "falltime",
+        ... "closure_duration"}
+
+    Create Table with column names: "endpoint_table", 2, col_names$#
+    endpoint_table_object_index = selected("Table")
+
+    call vocal_tract_resonances f3_frequency
+
+    Set numeric value: 1, "step", 1
+    Set numeric value: 2, "step", 2
+
+    Set numeric value: 1, "raise_db_by", 'start_raise_db_by:0'
+    Set numeric value: 2, "raise_db_by", 'end_raise_db_by:0'    
+
+    Set numeric value: 1, "peak_freq_1", 'vocal_tract_resonances.f1:0'
+    Set numeric value: 2, "peak_freq_1", 'vocal_tract_resonances.f1:0'
+
+    Set numeric value: 1, "peak_freq_2", 'f2_frequency:0'
+    Set numeric value: 2, "peak_freq_2", 'f2_frequency:0'
+
+    Set numeric value: 1, "peak_freq_3", 'f3_frequency:0'
+    Set numeric value: 2, "peak_freq_3", 'f3_frequency:0'
+
+    Set numeric value: 1, "peak_freq_4", 'vocal_tract_resonances.f4:0'
+    Set numeric value: 2, "peak_freq_4", 'vocal_tract_resonances.f4:0'
+
+    Set numeric value: 1, "peak_freq_5", 'vocal_tract_resonances.f5:0'
+    Set numeric value: 2, "peak_freq_5", 'vocal_tract_resonances.f5:0'
+
+    Set numeric value: 1, "peak_freq_6", 'vocal_tract_resonances.f6:0'
+    Set numeric value: 2, "peak_freq_6", 'vocal_tract_resonances.f6:0'
+
+    Set numeric value: 1, "peak_freq_7", 'vocal_tract_resonances.f7:0'
+    Set numeric value: 2, "peak_freq_7", 'vocal_tract_resonances.f7:0'
+
+    Set numeric value: 1, "peak_freq_8", 'vocal_tract_resonances.f8:0'
+    Set numeric value: 2, "peak_freq_8", 'vocal_tract_resonances.f8:0'
+
+    for peak from 1 to num_peaks
+        Set numeric value: 1, "peak_int_'peak'", start_peak_int_'peak'
+        Set numeric value: 2, "peak_int_'peak'", end_peak_int_'peak'
+
+        Set numeric value: 1, "peak_db_oct_'peak'", start_peak_db_oct_'peak'
+        Set numeric value: 2, "peak_db_oct_'peak'", end_peak_db_oct_'peak'
+    endfor
+
+    Set numeric value: 1, "duration", start_duration_s
+    Set numeric value: 2, "duration", end_duration_s
+    Set numeric value: 1, "risetime", start_risetime_s
+    Set numeric value: 2, "risetime", end_risetime_s
+    Set numeric value: 1, "falltime", start_falltime_s
+    Set numeric value: 2, "falltime", end_falltime_s
+
+    Set numeric value: 1, "closure_duration", start_closure_duration_s
+    Set numeric value: 2, "closure_duration", end_closure_duration_s
+    
+endproc
+
+procedure interpolate_endpoint_table
+    # start with endpoint_table,
+    # create intermediate steps for the continuum
+
+    if num_steps < 2
+        exitScript: "Number of steps must be at least 2"
+
+    elsif num_steps == 2
+        # If only two steps requested, then no interpolation is needed;
+        # just make an exact copy.
+        select endpoint_table_object_index
+        Copy: "table"
+    else
+        # Interpolate!
+        # First, create a table large enough to support all the steps requested
+            col_names$# = {"step", "peak_freq_1", "peak_freq_2", "peak_freq_3", "peak_freq_4", "peak_freq_5", "peak_freq_6", "peak_freq_7", "peak_freq_8", 
+        ... "peak_int_1", "peak_int_2", "peak_int_3", "peak_int_4", "peak_int_5", "peak_int_6", "peak_int_7", "peak_int_8", "raise_db_by", 
+        ... "peak_db_oct_1", "peak_db_oct_2", "peak_db_oct_3", "peak_db_oct_4", "peak_db_oct_5", "peak_db_oct_6", "peak_db_oct_7", "peak_db_oct_8","duration", "risetime", "falltime",
+        ... "closure_duration"}
+        Create Table with column names: "table", num_steps, col_names$#
+        
+        for step from 1 to num_steps
+            Set numeric value: step, "step", step
+
+            select endpoint_table_object_index
+            num_cols = Get number of columns
+
+            for col_index from 2 to num_cols
+                col_name$ = Get column label: col_index
+                select endpoint_table_object_index
+                # get endpoints
+                start = Get value: 1, col_name$
+                end   = Get value: 2, col_name$
+                
+                # linearly interpolate between them
+                interp_value = start + ( ( (end - start)/(num_steps-1) )*(step-1) )
+                interp_value = 'interp_value:3'
+                selectObject: "Table table"
+                Set numeric value: step, col_name$, interp_value
+            endfor
+        endfor
+    endif
+endproc
+
+procedure modify_current_endpoint_table
+    call obtain_previous_parameters
+    
+    # call up a new parameter form with side-by-side values
+    #  (maybe will change this to not have the left value; just put it in the text)
+    call user_UPDATE_continuum_parameters
+
+    # create the new table 
+    # and override the values with the modified values
+    call make_endpoint_table
+
+    # rename the output of that procedure
+    select Table endpoint_table
+
+    # update the object index for the endpoint table to use in this script
+    endpoint_table_object_index = selected("Table")
+endproc
+
+procedure obtain_previous_parameters
+    # Get the default starting values from the existing table
+
+    select endpoint_table_object_index
+    final_row = Get number of rows
+
+    # extract formant values from the previous table
+    f2_frequency = Get value: 1, "peak_freq_2"
+    f3_frequency = Get value: 1, "peak_freq_3"
+
+        for peak_index from 1 to num_peaks
+            default_start_peak_int_'peak_index' = Get value: 1, "peak_int_'peak_index'"
+            default_end_peak_int_'peak_index' = Get value: final_row, "peak_int_'peak_index'"
+
+            default_start_peak_db_oct_'peak_index' = Get value: 1, "peak_db_oct_'peak_index'"
+            default_end_peak_db_oct_'peak_index' = Get value: final_row, "peak_db_oct_'peak_index'"
+        endfor
+
+        default_start_duration_s = Get value: 1, "duration"
+        default_start_risetime_s = Get value: 1, "risetime"
+        default_start_falltime_s = Get value: 1, "falltime"
+        default_start_closure_duration_s = Get value: 1, "closure_duration"
+        
+        default_end_duration_s = Get value: final_row, "duration"
+        default_end_risetime_s = Get value: final_row, "risetime"
+        default_end_falltime_s = Get value: final_row, "falltime"
+        default_end_closure_duration_s = Get value: final_row, "closure_duration"
+        
+        start_raise_db_by  = Get value: 1, "raise_db_by"
+        end_raise_db_by  = Get value: final_row, "raise_db_by"
+endproc
+
+procedure user_UPDATE_continuum_parameters
+    #================================================================================#
+    #
+    #
+    #     user opportunity to MODIFY
+    #        starting endpoint of the continuum (sh)
+    #
+    #
+    beginPause: "Fricative continuum STARTPOINT settings"
+        comment: "START parameters (usually for 'sh')"
+        positive: "num_steps", num_steps
+        #comment: ""
+        if user_set_F3 == 1
+            real: "f2_frequency", 1700
+            real: "f3_frequency", 2600
+        endif
+
+        # (not looped, because we want to add the note for F3)
+
+        sentence:    "left x",  "OLD value"
+        sentence:    "right x",  "NEW value"
+        real:    "left start_peak_int_1",  default_start_peak_int_1
+        real:    "right start_peak_int_1",  default_start_peak_int_1
+
+        real:    "left start_peak_int_2",  default_start_peak_int_2
+        real:    "right start_peak_int_2",  default_start_peak_int_2
+
+        comment: "F3 is peak for 'sh'"
+        real:    "left start_peak_int_3",  default_start_peak_int_3
+        real:    "right start_peak_int_3",  default_start_peak_int_3
+
+        real:    "left start_peak_int_4",  default_start_peak_int_4
+        real:    "right start_peak_int_4",  default_start_peak_int_4
+
+        real:    "left start_peak_int_5",  default_start_peak_int_5
+        real:    "right start_peak_int_5",  default_start_peak_int_5
+
+        real:    "left start_peak_int_6",  default_start_peak_int_6
+        real:    "right start_peak_int_6",  default_start_peak_int_6
+
+        real:    "left start_peak_int_7",  default_start_peak_int_7
+        real:    "right start_peak_int_7",  default_start_peak_int_7
+
+        real:    "left start_peak_int_8",  default_start_peak_int_8
+        real:    "right start_peak_int_8",  default_start_peak_int_8
+
+        comment: "Add this to the peak dB values (calculated based on vowel intensity)"
+        real: "left start_dB_add_to_all_peak_levels", start_raise_db_by
+        real: "right start_dB_add_to_all_peak_levels", start_raise_db_by
+        comment: ""
+        real:    "start_duration_s", default_start_duration_s
+        real:    "start_risetime_s", default_start_risetime_s
+        real:    "start_falltime_s", default_start_falltime_s
+        real:    "start_closure_duration_s", default_start_closure_duration_s
+        boolean: "set_indiv_peak_slopes", 0
+
+    endPause: "Continue",1
+    start_raise_db_by = right_start_dB_add_to_all_peak_levels
+    
+    # set the new params using the "right - " values
+    for peak_num from 1 to num_peaks
+        start_peak_int_'peak_num' = right_start_peak_int_'peak_num'
+
+        # default peakiness values (can be overwritten in next step)
+        start_peak_db_oct_'peak_num' = default_start_peak_db_oct_'peak_num'
+    endfor
+
+    # if user elected to set individual peak slopes...
+    if set_indiv_peak_slopes == 1
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "for START of continuum (usually 'sh')"
+            comment: ""
+            comment: "peak peakiness (dB/octave)"
+
+            sentence:    "left x",  "OLD value"
+            sentence:    "right x",  "NEW value"
+            
+            # enumerate all the values for peakiness
+            for peak_num from 1 to num_peaks
+                real:    "left start_peak_db_oct_'peak_num'",  default_start_peak_db_oct_'peak_num'
+                real:    "right start_peak_db_oct_'peak_num'",  default_start_peak_db_oct_'peak_num'
+            endfor
+
+            comment: "obscure parameters"
+            boolean: "new_noise_per_step", 0
+            boolean: "use_premade_noise", 0
+        endPause: "continue",1
+    
+        # set the new params using the "right - " values
+        for peak_num from 1 to num_peaks
+            start_peak_db_oct_'peak_num' = right_start_peak_db_oct_'peak_num'
+        endfor
+    endif
+
+    #================================================================================#
+    #
+    #
+    #     user opportunity to MODIFY
+    #        other endpoint of the continuum (s)
+    #
+    #
+    beginPause: "Fricative continuum ENDPOINT settings"
+        comment: "END parameters (usually for /s/)"
+        comment: "peak intensities"
+        comment: "F3 is peak for 'sh'"
+        comment: "F5, F6 or F7 is peak for /s/"
+        sentence:    "left x",  "OLD value"
+        sentence:    "right x",  "NEW value"
+        comment: ""
+
+        # enumerate all the values for peakiness
+        for peak_num from 1 to num_peaks
+            real:    "left end_peak_int_'peak_num'",  default_end_peak_int_'peak_num'
+            real:    "right end_peak_int_'peak_num'",  default_end_peak_int_'peak_num'
+        endfor
+
+        comment: "Add this to the peak dB values (calculated based on vowel intensity)"
+        real: "left end_dB_add_to_all_peak_levels", end_raise_db_by
+        real: "right end_dB_add_to_all_peak_levels", end_raise_db_by
+
+        comment: ""
+        real:    "end_duration_s", default_end_duration_s
+        real:    "end_risetime_s", default_end_risetime_s
+        real:    "end_falltime_s", default_end_falltime_s
+        real:    "end_closure_duration_s", default_end_closure_duration_s
+
+        boolean: "set_indiv_peak_slopes", set_indiv_peak_slopes
+    end_parameters_set = endPause: "Continue",1
+
+    # set the new params using the "right - " values
+    for peak_num from 1 to num_peaks
+        end_peak_int_'peak_num' = right_end_peak_int_'peak_num'
+
+        # default peakiness values (can be overwritten in next step)
+        end_peak_db_oct_'peak_num' = default_end_peak_db_oct_'peak_num'
+    endfor
+
+    # simplify the variable name
+    end_raise_db_by = right_end_dB_add_to_all_peak_levels
+
+    if set_indiv_peak_slopes == 1
+        beginPause: "More fricative continuum ENDPOINT settings"
+            comment: "for END of continuum (usually 's')"
+            comment: ""
+            comment: "peak peakiness (dB/octave)"
+
+            sentence:    "left x",  "OLD value"
+            sentence:    "right x",  "NEW value"
+            # enumerate all the values for peakiness as you create this pause window
+            for peak_num from 1 to num_peaks
+                real:    "left end_peak_db_oct_'peak_num'",  default_end_peak_db_oct_'peak_num'
+                real:    "right end_peak_db_oct_'peak_num'",  default_end_peak_db_oct_'peak_num'
+            endfor
+
+        endPause: "continue",1
+
+        # set the new params using the "right - " values
+        for peak_num from 1 to num_peaks
+            end_peak_db_oct_'peak_num' = right_end_peak_db_oct_'peak_num'
+        endfor
+    endif
+endproc
+
+procedure set_range_for_drawing
+    # use maximum spectral peak to set range for drawing 
+    # cycle through all the peaks, updating 
+        # initialize spectral peak max
+        .max_spectral_peak = -99
+
+        for row from 1 to num_steps
+            for peak_index from 1 to num_peaks
+                selectObject: "Table table"
+                peak_level = Get value: row, "peak_int_'peak_index'"
+
+                if peak_level > .max_spectral_peak
+                    .max_spectral_peak = peak_level
+                endif
+            endfor
+        endfor
+    
+    selectObject: "Table table"
+    .raise_db_by = Get value: 1, "raise_db_by"
+
+    # round up to nearest 10 dB
+    call round_up .max_spectral_peak+.raise_db_by+2 10
+    draw_dB_high = round_up.value_round
+    draw_dB_low = draw_dB_high - drawDB_dynamic_range
+endproc
+
+procedure draw_spectra
+    Erase all
+    Select outer viewport: 0, 6.5, 0, 4.5
+
+    select Sound step_1
+    for step from 2 to num_steps
+        plus Sound step_'step'
+    endfor
+
+    number_of_selected_sounds = numberOfSelected ("Sound")
+
+    for this_selected_sound to number_of_selected_sounds
+        sound'this_selected_sound' = selected("Sound",this_selected_sound)
+    endfor
+
+    for this_sound from 1 to number_of_selected_sounds
+        red_gradient = ('this_sound'-1)/('number_of_selected_sounds'-1)
+        r = red_gradient
+        g = 0.0
+        b = 1-red_gradient
+        Colour... {'r','g','b'}
+        Line width: 2
+
+        select sound'this_sound'
+        .name$ = selected$("Sound")
+        call draw_smoothed_spectrum '.name$'
+    endfor
+
+    # x-axis (frequency) labels
+    Marks bottom every: 1, 1000, "yes", "yes", "no"
+
+endproc
+
+procedure compensate_for_closure_duration .name$ step
+    # qqq note: want to  write this function eventually
+    # goal: don't let the extended closure duration
+    # accidentally make the fricative spectrum look lower in intensity
+    # (that would result from incorporating the closure silence into the spectrum)
+endproc
+
+procedure draw_smoothed_spectrum .name$
+    select Sound '.name$'
+
+    call compensate_for_closure_duration '.name$' this_sound
+
+    To Spectrum... yes
+    Cepstral smoothing... 'smoothing_for_drawing'
+    Rename: "'.name$'_smooth"
+    select Spectrum '.name$'
+    Remove
+    select Spectrum '.name$'_smooth
+    Draw... draw_Hz_low draw_Hz_high draw_dB_low draw_dB_high yes
+    select Spectrum '.name$'_smooth
+    Remove
+endproc
+
+procedure draw_spectra_w_vowel
+    # determine parameters based on position of the fricative
+    if position$ == "onset" or position$ == "medial"
+        vowel$ = part_after_fricative$
+        # extract the first 45 ms of the vowel to draw the spectrum
+        vowel_extraction_start = 0
+        vowel_extraction_end = 0.045
+
+    elsif position$ == "offset"
+        vowel$ = part_before_fricative$
+        select Sound 'vowel$'
+        vowel_duration = Get total duration
+
+        # extract the last 60 ms of the vowel to draw the spectrum
+        # (slightly larger window to accomodate lower intensity
+        #  as the vowel tapers off)
+        vowel_extraction_start = vowel_duration - 0.06
+        vowel_extraction_end = vowel_duration
+
+    endif
+
+    # extract the vowel part for the spectrum analysis
+        select Sound 'vowel$'
+        Extract part: vowel_extraction_start, vowel_extraction_end, "rectangular", 1, "no"
+        Rename: "vowel_part"
+
+    # should set a new draw_dB_high incorporating the vowel
+    # get spectral peak of the vowel
+        To Spectrum: "yes"
+        Cepstral smoothing: smoothing_for_drawing
+        Rename: "to_remove"
+        Tabulate: "no", "yes", "no", "no", "no", "yes"
+        .vowel_max_spectral_peak = Get maximum: "pow(dB/Hz)"
+        .vowel_max_spectral_peak_bumped = .vowel_max_spectral_peak + 4
+        plus Spectrum to_remove
+        Remove
+
+        call round_up .vowel_max_spectral_peak_bumped 10
+        draw_dB_high = round_up.value_round
+
+    # select top of the picture window
+        Select outer viewport: 0, 6.5, 4.5, 9
+
+    # first draw the vowel in black
+        Line width: 3
+        Black
+        call draw_smoothed_spectrum vowel_part
+
+    # sh-endpoint in blue
+        Line width: 2
+        Blue
+        call draw_smoothed_spectrum step_1
+
+    # s-endpoint in red
+        Red
+        call draw_smoothed_spectrum step_'num_steps'
+    
+    # x-axis (frequency) labels
+        Marks bottom every: 1, 1000, "yes", "yes", "no"
+
+    # draw locations of all the frequency peaks
+        if draw_peak_frequencies_on_graph == 1
+            selectObject: "Table table"
+            for peak from 1 to num_peaks
+                peak_freq = Get value: 1, "peak_freq_'peak'"
+                One mark bottom: peak_freq, "no", "yes", "yes", ""
+            endfor
+        endif
+
+    # cleanup
+        select Sound vowel_part
+        plus Spectrum vowel_part
+        Remove
+endproc
+
+
+procedure user_choose_vowel_from_object
+    if position$ == "offset" or position$ == "medial"
+        nocheck select Sound 'demo_sound_name$'
+        beginPause: "select object to extract sound"
+            comment: "<-- Select an object to extract the sound"
+            comment: "    that will be placed before the fricative"
+            comment: ""
+            if position$ == "offset"
+                comment: " For example, a sound containing the ending of a word, like ''fini_''"
+                comment: " or a full word like ''finish'' (you would extract the 'fini' in the next step)"            
+            elsif position$ == "medial"
+                comment: " For example, a sound containing the ending of a word, like ''me___y"
+                comment: " or a full word like ''messy'' (you would extract the 'me_' in the next step)"            
+            endif
+            comment: ""
+        clicked = endPause: "continue",1
+
+        word$ = selected$("Sound")
+        samplerate = Get sampling frequency
+        end_time = Get end time
+
+        View & Edit
+        editor Sound 'word$'
+            Select... 0 0
+            beginPause: "select object to extract sound"
+                comment: "select ONset of anything that would occur before the fricative"
+                comment: ""
+                comment: "(For example, in the word ''mass'', you would click the onset of 'm' or earlier)"
+                comment: ""
+            clicked = endPause: "continue",1
+
+            Move cursor to nearest zero crossing
+            start = Get cursor
+
+            Select... end_time end_time
+            beginPause: "select endpoint"
+                comment: "select OFFset of the vowel that would come just before the fricative"
+                comment: ""
+                comment: "(for example, in the word ''mass'', select the end of the vowel, just before the s)"
+                comment: ""
+            clicked = endPause: "continue",1
+
+            Move cursor to nearest zero crossing
+            end = Get cursor
+            Close
+        endeditor
+
+        select Sound 'word$'
+        Extract part: start, end, "rectangular", 1, "no"
+        Rename: "part_before_fricative"
+        part_before_fricative$ = selected$("Sound")
+        orig_sound_label$ = word$
+    endif
+
+    if position$ == "onset" or position$ == "medial"
+        # re-select the same object that was used for the onset
+        # (if you're using medial position)
+        nocheck select Sound 'demo_sound_name$'
+        nocheck select Sound 'word$'
+        beginPause: "select object to extract sound"
+            comment: "<-- Select an object to extract the sound"
+            comment: "    that will be placed after the fricative"
+            comment: ""
+            if position$ == "onset"
+                comment: " For example, a sound containing the ending of a word, like ''_eet''"
+                comment: " or a full word like ''sheet'' (you would extract the 'eet' in the next step)"
+            elsif position$ == "medial"
+                comment: " For example, a sound containing the ending of a word, like ''me___y"
+                comment: " or a full word like ''messy'' (you would extract the '_y' in the next step)" 
+            endif
+
+            comment: ""
+        clicked = endPause: "continue",1
+
+        word$ = selected$("Sound")
+        samplerate = Get sampling frequency
+        end_time = Get end time
+
+        View & Edit
+        editor Sound 'word$'
+            Select... auto_onset_time_landmark auto_onset_time_landmark
+            beginPause: "select time landmark"
+                comment: "select ONset of the vowel that would start just after the fricative"
+                comment: ""
+                comment: ""
+            clicked = endPause: "continue",1
+            # Move cursor to nearest zero crossing
+            start = Get cursor
+
+            Select... end_time end_time
+            beginPause: "select endpoint"
+                comment: "select OFFset of everything that would follow after the fricative"
+                comment: ""
+                comment: "(for example, in the word ''sheet'', select the end of the 't' sound)"
+                comment: ""
+            clicked = endPause: "continue",1
+
+            # Move cursor to nearest zero crossing
+            end = Get cursor
+            Close
+        endeditor
+
+        select Sound 'word$'
+        Extract part: start, end, "rectangular", 1, "no"
+        Rename: "part_after_fricative"
+        part_after_fricative$ = selected$("Sound")
+
+        # encode name of original sound used to extract this portion
+        if position$ != "medial"
+            orig_sound_label$ = word$
+        else
+            # if it's a word-medial fricative,
+            # there are two original sounds
+            # assign the part after fricative to be the most recently selected word (object)
+            orig_sound_label2$ = word$
+        endif
+        # end conditional on position$ == "onset" or position$ == "medial"
+    endif
+
+    if position$ == "none"
+        orig_sound_label$ = ""
+        orig_sound_label2$ = ""
+    endif
+endproc
+
+procedure append_vowel
+    if position$ == "none"
+        #take no action
+        print 'newline$'
+        print note that xx in the filename stands in place of where a sound object would have been 'newline$'
+
+    elsif position$ == "onset"
+        # append vowel after the fricative
+
+        overlap_blend_dur = overlap_blend_dur_onset
+        #
+        select Sound 'part_after_fricative$'
+        # some processing that might not be necessary,
+        # but importantly puts the vowel at the end of the list
+        Convert to mono
+        Resample... samplerate 50
+        Rename: "vowel2"
+
+        for step from 1 to num_steps
+            select Sound step_'step'
+            plus Sound vowel2
+            if overlap_blend_dur > 0
+                Concatenate with overlap... overlap_blend_dur
+            else
+                Concatenate
+            endif
+            # use this line instead to maintain the original vowel filename in the ultimate name
+            Rename: "step_'step''sep$''orig_sound_label$''extra_detail_label$'"
+        endfor
+        select Sound vowel2
+        plus Sound 'part_after_fricative$'_mono
+        Remove
+
+    elsif position$ == "offset"
+        # append fricative after the vowel
+            overlap_blend_dur = overlap_blend_dur_offset
+        
+        for step from 1 to num_steps
+            select Sound 'part_before_fricative$'
+            Convert to mono
+            Resample... samplerate 50
+            Rename: "vowel2"
+            
+            select Sound step_'step'
+            Copy: "Fricative2"
+            
+            select Sound vowel2
+            plus Sound Fricative2
+            if overlap_blend_dur > 0
+                Concatenate with overlap... overlap_blend_dur
+            else
+                Concatenate
+            endif
+                # use this line instead to maintain the original vowel filename in the ultimate name
+                Rename: "step_'step''sep$''orig_sound_label$''extra_detail_label$'"
+
+            # cleanup
+            select Sound Fricative2
+            plus Sound vowel2
+            plus Sound 'part_before_fricative$'_mono
+            Remove
+        endfor
+
+    elsif position$ == "medial"
+        # fricative is word-medial
+        overlap_blend_dur = overlap_blend_dur_onset
+
+        # first assemble the pieces in order
+            select Sound 'part_before_fricative$'
+            Convert to mono
+            Resample... samplerate 50
+            Rename: "leader"
+
+            select Sound 'part_after_fricative$'
+            Convert to mono
+            Resample... samplerate 50
+            Rename: "trailer"
+
+            for step from 1 to num_steps
+                select Sound step_'step'
+                Copy: "fric"
+
+                plus Sound leader
+                Concatenate with overlap... overlap_blend_dur_onset
+                Rename: "onset"
+
+                select Sound trailer
+                Copy: "trailer2"
+
+                select Sound onset
+                plus Sound trailer2
+                Concatenate with overlap... overlap_blend_dur_offset
+
+                # maintain the original vowel filename(s) in the output name
+                #
+                # if you extracted leader & trailer from same object,
+                # only use the name once
+                if orig_sound_label$ == orig_sound_label2$
+                    Rename: "step_'step''sep$''orig_sound_label$''extra_detail_label$'"
+                else
+                    # otherwise, 
+                    # maintain names of both objects used to create the new sound
+                    Rename: "step_'step''sep$''orig_sound_label$'_'orig_sound_label2$''extra_detail_label$'"
+                endif
+
+                select Sound trailer2
+                plus Sound onset
+                plus Sound fric
+                Remove
+
+            endfor
+            select Sound leader
+            plus Sound trailer
+            plus Sound 'part_before_fricative$'_mono
+            plus Sound 'part_after_fricative$'_mono
+            Remove
+    endif
+endproc
+
+procedure user_choose_fricative_position
+    # user indicates position of the fricative
+    #
+    # note that even if there is no placement of the fricative within a syllable,
+    # you still need to specify where it *would* go,
+    # because it changes the timeing parameters
+    #
+    beginPause: "Fricative word position"
+        if method$ != "just make fricatives"
+            comment: "Where will the fricative go?"
+        else
+            # if just fricatives, change to hypothetical
+            comment: "set fricative parameters based on which word position?"
+        endif
+        comment: ""
+        comment: "(this will initialize timing settings)"
+        choice: "append_where", 1
+            option: "fricative before vowel"
+            option: "fricative in the middle"
+            option: "fricative after vowel"
+    clicked = endPause: "continue",1
+
+    if append_where == 1
+        position$ = "onset"
+    elsif append_where == 2
+        position$ = "medial"        
+    elsif append_where == 3
+        position$ = "offset"
+    endif
+endproc
+
+procedure initialize_timing_parameters
+    if position$ = "onset"
+        call onset_timing_defaults
+    elsif position$ = "medial"
+        call medial_timing_defaults
+    elsif position$ = "offset"
+        call offset_timing_defaults
+    endif
+endproc
+
+procedure analyze_vowel
+
+    # extract info from the correct segment
+    if position$ == "onset" or position$ == "medial"
+        call get_vowel_info 'part_after_fricative$' 'manual_check_spectrum'
+    elsif position$ == "offset"
+        call get_vowel_info 'part_before_fricative$' 'manual_check_spectrum'
+    endif
+
+    f2_frequency = get_vowel_info.f2
+    f3_frequency = get_vowel_info.f3
+    vowel_intensity = get_vowel_info.vowel_intensity
+    samplerate = get_vowel_info.samplerate
+endproc
+
+procedure get_vowel_info .name$ .manual_check_spectrum
+
+    .formant_analysis_window = 0.03
+    intensity_analysis_window = 0.08
+    selectObject: "Sound '.name$'"
+    .samplerate = Get sampling frequency
+
+    # first extract the vowel and buffer it with silence
+    # to facilitate formant tracking
+    #
+    # (different if-conditions depending on position of vowel 
+    # relative to fricative i.e. onset or offset)
+    #
+    if position$ == "onset" or position$ == "medial"
+        # Get intensity
+            selectObject: "Sound '.name$'"
+            Extract part: 0, intensity_analysis_window, "rectangular", 1, "no"
+            .vowel_intensity = Get intensity (dB)
+            Remove
+
+        # analysis points that accomodate a silent buffer
+        # that is needed to facilitate formant tracking
+            vowel_extraction_start = 0.5 + 0.005
+            vowel_extraction_end = 0.5 + 0.005 + (.formant_analysis_window)
+            formant_extraction_time = 0.5 + .formant_analysis_window
+
+            formant_view_start = 0.45
+            formant_view_end = 0.7
+            formant_crosshair_selection_time = 0.51
+
+        Create Sound from formula: "buffer", 1, 0, 0.5, samplerate, "0"
+        # copy the sound to be below the silence buffer in the obejct list
+            selectObject: "Sound '.name$'"
+            Copy: "'.name$'_temp"
+
+        # add the buffer
+            selectObject: "Sound buffer"
+            plusObject: "Sound '.name$'_temp"
+            Concatenate
+            Rename: "'.name$'_w_buffer"
+            selectObject: "Sound buffer"
+            plusObject: "Sound '.name$'_temp"
+            Remove
+
+        selectObject: "Sound '.name$'_w_buffer"
+        Extract part: vowel_extraction_start, vowel_extraction_end, "rectangular", 1, "no"
+            
+    elsif position$ == "offset"
+        # Get vowel onset to measure vowel intensity
+            select Sound '.name$'
+            total_dur = Get total duration
+
+            # set up the window timing landmarks for viewing the sound
+            formant_view_start = total_dur - 0.14
+            formant_view_end = total_dur + 0.04
+            formant_crosshair_selection_time = 0.51
+
+            View & Edit
+            editor Sound '.name$'
+                beginPause: "Choose vowel onset"
+                    comment: "click on the START of the vowel that comes before the fricative"
+                    comment: "(careful accuracy is not needed here; "
+                    comment: "this is only to get a rough estimate of the vowel intensity)"
+                endPause: "Continue",1
+                
+                vowel_onset = Get cursor
+
+                Select... total_dur total_dur
+                beginPause: "Choose vowel onset"
+                    comment: "click on the END of the vowel that comes before the fricative"
+                    comment: "(Tip: include low-intensity parts at the end of the vowel"
+                    comment: "but none of the actual frication noise)"
+                endPause: "Continue",1                
+                
+                vowel_offset = Get cursor
+
+                Close
+            endeditor
+    
+        # Get intensity
+            Extract part: vowel_offset - intensity_analysis_window, total_dur, "rectangular", 1, "no"
+            .vowel_intensity = Get intensity (dB)
+            Remove
+
+        # create silence buffer to facilitate formant analysis
+            Create Sound from formula: "buffer", 1, 0, 0.5, samplerate, "0"
+
+            selectObject: "Sound '.name$'"
+            plusObject: "Sound buffer"
+            Concatenate
+            Rename: "'.name$'_w_buffer"
+            endtime = Get end time
+
+            selectObject: "Sound buffer"
+            Remove
+        
+        # extract little chunk of sound for formant analysis
+        # slightly longer formant analysis window for offset position
+        # and extraction end is 10 ms before actual end
+        # (because the tapering can get really low in intensity)
+            vowel_extraction_start = endtime - 0.51 - (.formant_analysis_window * 1.5)
+            vowel_extraction_end = endtime - 0.51
+            formant_extraction_time = endtime - 0.51 - .formant_analysis_window
+
+            selectObject: "Sound '.name$'_w_buffer"
+            Extract part: vowel_extraction_start, vowel_extraction_end, "rectangular", 1, "no"
+
+    endif
+
+     # check formant tracking here, using the buffered signal
+    call manual_check_formant_settings '.name$'_w_buffer
+        # exports:
+        # manual_check_formant_settings.num_formants, 
+        # manual_check_formant_settings.max_formant_Hz
+
+        .num_formants = manual_check_formant_settings.num_formants
+        .max_formant_Hz = manual_check_formant_settings.max_formant_Hz
+
+    # get formant information
+        selectObject: "Sound '.name$'_w_buffer"
+        To Formant (burg): 0, manual_check_formant_settings.num_formants, manual_check_formant_settings.max_formant_Hz, 0.04, 50
+
+        .f3 = Get value at time: 3, formant_extraction_time, "hertz", "linear"
+        .f2 = Get value at time: 2, formant_extraction_time, "hertz", "linear"
+        Remove
+
+    # View f3 on the spectrum
+        selectObject: "Sound '.name$'_w_buffer"
+        Extract part: vowel_extraction_start, vowel_extraction_end, "rectangular", 1, "no"
+        To Spectrum: "yes"
+        Cepstral smoothing... 300
+        Rename: "'.name$'_spectrum_smoothed"
+        select Sound '.name$'_w_buffer_part
+        Remove
+
+        if .manual_check_spectrum
+            select Spectrum '.name$'_spectrum_smoothed
+            View & Edit
+            editor Spectrum '.name$'_spectrum_smoothed
+                Zoom: 0, .max_formant_Hz+200
+                Move cursor to: '.f3:0'
+                Move cursor to nearest peak
+
+                beginPause: "Is the F3 estimate correct at '.f3:0' Hz?"
+                comment: "verify if the THIRD formant (F3) is identified correctly"
+                comment: "if not (or if you want to manually check on the spectrogram"
+                comment: "or click it manually on a spectrum)"
+                comment: "then click No / not sure"
+                clicked = endPause: "Yes","No / not sure",1
+                Close
+            endeditor
+
+            # let the user define F3 if they didn't like the auto selection
+            if clicked == 2
+                # let user manually indicate the F3
+                # (on the spectrum or on the spectrogram)
+                call user_check_f3 '.name$' .f3 "F3"
+                .f3 = user_check_f3.f3
+            endif
+
+            # check for F2
+            select Spectrum '.name$'_spectrum_smoothed
+            View & Edit
+            editor Spectrum '.name$'_spectrum_smoothed
+                Zoom: 0, .max_formant_Hz+200
+                Move cursor to: '.f2:0'
+                Move cursor to nearest peak
+
+                beginPause: "Is the F2 estimate correct at '.f2:0' Hz?"
+                comment: "verify if the SECOND formant (F2) is identified correctly"
+                comment: "if not (or if you want to manually check on the spectrogram"
+                comment: "or click it manually on a spectrum)"
+                comment: "then click No / not sure"
+                clicked = endPause: "Yes","No / not sure",1
+                Close
+            endeditor
+
+            # let the user define F2 if they didn't like the auto selection
+            # should change the name of this function
+            # to make it seem more general, 
+            # and not just for F3
+            if clicked == 2
+                # let user manually indicate the F3
+                # (on the spectrum? on the spectrogram?)
+                call user_check_f3 '.name$' .f2 "F2"
+                # note below: it looks like this is 
+                # erroneously capturing F3 instead of F2,
+                # but that's only because .f3 is the hard-coded output;
+                # it could be recoded, but it works fine. 
+                .f2 = user_check_f3.f3
+            endif
+        endif
+
+    # Cleanup
+        select Spectrum '.name$'_spectrum_smoothed
+        plus Spectrum '.name$'_w_buffer_part
+        plus Sound '.name$'_w_buffer
+        plus Sound '.name$'_w_buffer_part
+        Remove
+endproc
+
+procedure manual_check_formant_settings .name$
+
+    # initialize starting values for display
+    num_formants = 4
+    max_formant_Hz = 4400
+
+    select Sound '.name$'
+    .end_time = Get total duration
+    View & Edit
+    editor Sound '.name$'
+
+        # ensure that spectrogram is shown
+        # spectrogram, pitch, intensity, formants, pulses
+        Show analyses... yes no no yes no 10
+        Spectrogram settings: 0, 4800, 0.005, 50
+        Formant settings: max_formant_Hz, num_formants, 0.03, 25, 2
+        
+        # zoom to show the vowel
+        if position$ == "onset" or position$ == "medial"
+            # display from a little bit before to a little bit after the vowel onset
+            Select: 0.45, 0.7
+            Zoom to selection
+            # place the cursor directly on the vowel onset
+            # (accounting for the 0.5s buffer)
+            Select: 0.5, 0.5
+        elsif position$ == "offset"
+            # work backwards from end 
+            # display from a little bit before to a little bit after the vowel offset
+            Select: .end_time - 0.7, .end_time -0.45
+            Zoom to selection
+            # place the cursor directly on the vowel offset
+            # (accounting for the 0.5s buffer)
+            Select: .end_time - 0.5, .end_time - 0.5
+        endif
+    
+        # initialize variable checked during while loop
+        formant_check = 1
+
+        # keep enabling formant settings modifications
+        # until the user is satisfied
+        while formant_check == 1
+            beginPause: "Check formant tracking"
+                # tried to constrain the user to an optionmenu
+                # to prevent headaches for less-experienced users
+                # who don't normally alter this setting. 
+                # but the constant conversion of optionmenu choice indices
+                # to strings values and then to numbers (for view updating)
+                # was more complicated than it was worth.
+                comment: "check to see if the formants are tracking correctly"
+                comment: "if not, then change these settings and click ''update view''"
+                comment: ""
+                comment: "reasonable starting settings are 4 formants within 4400 Hz"
+                comment: ""
+                comment: "(you can ignore any formant dots in the silent white area)"
+                comment: ""
+                natural: "num_formants", num_formants
+                positive: "max_formant_Hz", max_formant_Hz
+
+                comment: ""
+            formant_check = endPause: "Update View","formants are correct",2
+            
+            # update spectrogram view  
+            # so the user can check to see if it worked
+            Spectrogram settings: 0, 4800, 0.005, 50
+            Formant settings: max_formant_Hz, num_formants, 0.03, 25, 2
+        endwhile
+
+    nocheck endeditor
+
+    # collect the formant settings that the user landed on
+    .max_formant_Hz = max_formant_Hz
+    .num_formants = num_formants
+endproc
+
+procedure user_check_f3 .name$ .f3 .target_property$
+    beginPause: "Indicate" +  .target_property$
+        choice: "selection_method", 2
+		option: "choose on the spectrum"
+		option: "choose on the spectrogram"
+		option: "enter the number directly"
+        real: "manual_formant", 2800
+    f3_choice = endPause: "Continue", 1
+
+    if selection_method$ == "choose on the spectrum"
+
+        # click on the spectrum
+            select Spectrum '.name$'_spectrum_smoothed
+            View & Edit
+            editor Spectrum '.name$'_spectrum_smoothed
+                Zoom: 0, 5000
+                Move cursor to: '.f3:0'
+                pause click on the '.target_property$' peak, then press continue
+                Move cursor to nearest peak
+                .f3 = Get cursor
+                Close
+            endeditor
+
+    elsif selection_method$ == "choose on the spectrogram"
+        # call up the spectrogram of the buffered vowel
+        selectObject: "Sound '.name$'_w_buffer"
+        View & Edit
+        editor Sound '.name$'_w_buffer
+
+            Select: formant_view_start, formant_view_end
+            Zoom to selection
+            Select: formant_crosshair_selection_time, formant_crosshair_selection_time
+            
+            pause click on '.target_property$' at vowel 'position$', then press continue
+            .f3 = Get frequency at frequency cursor
+            Close
+        endeditor
+
+    elsif selection_method$ == "enter the number directly"
+        .f3 = manual_formant
+    endif
+endproc
+
+
+procedure check_slope_parameter
+    # check for slope value range
+    if peak_resonance_slope_sh < 0
+        exitScript: "peak_resonance_slope_sh must be 0 or greater"
+    endif
+    if peak_resonance_slope_s < 0
+        exitScript: "peak_resonance_slope_s must be 0 or greater"
+    endif
+
+    if peak_resonance_slope_sh > 20
+        beginPause: "Input value seems very large"
+        comment: "peak_resonance_slope_sh seems extremely large."
+        comment: "Usually it is between 3 and 6"
+        comment: "Are you SURE you want a value of 'peak_resonance_slope_sh'?"
+        real: "peak_resonance_slope_sh", peak_resonance_slope_sh
+        endPause: "Stop","Continue",1
+    endif
+    if peak_resonance_slope_s > 20
+        beginPause: "Input value seems very large"
+        comment: "peak_resonance_slope_s seems extremely large."
+        comment: "Usually it is between 5 and 12"
+        comment: "Are you SURE you want a value of 'peak_resonance_slope_s'?"
+        real: "peak_resonance_slope_s", peak_resonance_slope_s
+        endPause: "Stop","Continue",1
+    endif
+endproc
+
+procedure user_choose_spectrum_parameters
+    beginPause: "Spectrum parameters"
+        optionmenu: "sh_peak_at_which_formant", 1
+            option: "F3"
+            
+        # show user choice for s peak only if they are making sh-s continuum
+        if initialize_phonetic_contrast$ == "start with sh-s parameters"
+            optionmenu: "s_peak_at_which_formant", 3
+                option: "F5"
+                option: "F6"
+                option: "F7"
+                option: "F8"
+        endif
+        
+        if spectral_shape$ == "sloped"
+            comment: "clarity (group dB/resonance slope away from major peak)"
+            real: "peak_resonance_slope_sh", 3
+        
+        # show user choice for s slope only if they are making sh-s continuum
+            if initialize_phonetic_contrast$ == "start with sh-s parameters"
+                real: "peak_resonance_slope_s", 8
+            endif
+        endif
+    endPause: "continue", 1
+
+    if spectral_shape$ == "sloped"
+        call check_slope_parameter
+    endif
+
+    # convert resonance peaks into variable names
+        # sh resonance is always F3
+        if sh_peak_at_which_formant$ == "F3"
+            default_sh_peak_resonance = 3
+        endif
+
+        # s peak resonance is variable
+        if initialize_phonetic_contrast$ != "start with sh-s parameters"
+            # s peak resonance is not actually used, but the variable must be initated
+            default_s_peak_resonance = 7
+
+        elsif s_peak_at_which_formant$ == "F5"
+            default_s_peak_resonance = 5
+        elsif s_peak_at_which_formant$ == "F6"
+            default_s_peak_resonance = 6
+        elsif s_peak_at_which_formant$ == "F7"
+            default_s_peak_resonance = 7
+        elsif s_peak_at_which_formant$ == "F8"
+            default_s_peak_resonance = 8
+        endif
+
+    # use those selections to assemble an output name
+    # that preserves the peak resonance numbers 
+    if detailed_step_output == 1
+        if spectral_shape$ == "sloped"
+            extra_detail_label$ = "_'default_sh_peak_resonance'_'peak_resonance_slope_sh'_to_'default_s_peak_resonance'_'peak_resonance_slope_s'"
+        elsif spectral_shape$ == "contoured"
+            extra_detail_label$ = "_'default_sh_peak_resonance'_cont_to_'default_s_peak_resonance'_cont"
+        endif
+    else
+        extra_detail_label$ = ""
+    endif
+endproc
+
+procedure offset_timing_defaults
+    # in offset position, slightly longer duration 
+    default_start_duration_s = 0.260
+    default_start_risetime_s = 0.09
+    default_start_falltime_s = 0.120
+
+    default_end_duration_s = 0.260
+    default_end_risetime_s = 0.09
+    default_end_falltime_s = 0.120
+
+    default_start_closure_duration_s = 0.0
+    default_end_closure_duration_s = 0.0
+
+    if initialized_contrast$ == "sh-ch"
+        default_end_duration_s = 0.120
+        default_end_risetime_s = 0.030
+        default_end_falltime_s = 0.050
+        default_start_closure_duration_s = 0.0
+        default_end_closure_duration_s = 0.12
+    endif
+endproc
+
+procedure medial_timing_defaults
+    # shorter duration fricative in word-medial position
+    default_start_duration_s = 0.140
+    default_start_risetime_s = 0.010
+    default_start_falltime_s = 0.040
+
+    default_end_duration_s = 0.140
+    default_end_risetime_s = 0.010
+    default_end_falltime_s = 0.040
+    default_start_closure_duration_s = 0.0
+    default_end_closure_duration_s = 0.0
+    
+    # modify for fricative-affricate contrast
+    if initialized_contrast$ == "sh-ch"
+        # shorten the 'ch' endpoint 
+        default_end_duration_s = 0.100
+        default_end_risetime_s = 0.030
+        default_end_falltime_s = 0.050
+        default_start_closure_duration_s = 0.0
+        default_end_closure_duration_s = 0.12
+    endif
+endproc
+
+procedure onset_timing_defaults
+    #=================================================================#
+    #
+    #                   FRICATIVE  TIMING DEFAULTS
+    #
+    #                 assuming syllable-onset position
+    #
+    # for sh-s, the duration values are equal across the cotninuum
+    # all variables end in s (for 'seconds')
+    default_start_duration_s = 0.22
+    default_end_duration_s   = 0.22
+    
+    default_start_risetime_s = 0.11
+    default_end_risetime_s   = 0.11
+    
+    default_start_falltime_s = 0.06
+    default_end_falltime_s   = 0.06
+    
+    default_start_closure_duration_s = 0.0
+    default_end_closure_duration_s = 0.0
+
+    # modify for fricative-affricate contrast
+    if initialized_contrast$ == "sh-ch"
+        default_end_duration_s   = 0.100
+        default_end_risetime_s   = 0.030
+        default_end_falltime_s   = 0.050
+        default_end_closure_duration_s = 0.0
+    endif
+endproc
+
+procedure calculate_spectral_shape
+        #======================================================================#
+    #                  ^             ^                                     #
+    #                 / \^^      ^  / \                                    #
+    #                /     \   ^/ \/   \                                   #
+    #======================================================================#
+    #            CALCULATE                                                 #
+    #                  SPECTRUM                                            #
+    #                         PEAK                                         #
+    #                            LEVELS                                    #
+    #======================================================================#
+    #======================================================================#
+    #======================================================================#
+    #
+    #                       SLOPED SPECTRUM SHAPE
+    #
+    if spectral_shape$ == "sloped"
+    #
+    # --------------------------------------------------#
+    #
+    #                  SH endpoint  (sloped)
+    #
+            # F1 and F2 get much steeper slope
+            # peak 1
+            temp1 = 0 - ((abs(default_sh_peak_resonance - 1))*(peak_resonance_slope_sh*upslope_multiplier))
+            # peak 2
+            temp2 = 0 - ((abs(default_sh_peak_resonance - 2))*(peak_resonance_slope_sh*upslope_multiplier))
+
+            # pull Peak 1 toward -32 even if it is below -32
+            if preserve_lower_resonances == 1
+                if temp1 > -32
+                    temp1 = (temp1 - 32)/2
+                endif
+                # pull Peak 2 toward -28 even if it is below -28
+                if temp2 > -28
+                    temp2 = (temp2 -28)/2
+                endif
+            endif
+
+            # round to single decimal
+            default_start_peak_int_1 = round((temp1*10))/10
+            default_start_peak_int_2 = round((temp2*10))/10
+    
+            # Set intensities of the main peaks (3 and up) using the slope value
+            for peak_num from 3 to num_peaks
+            # peaks 3 through 8 get the slope from the startup window
+                temp = 0 - ((abs(default_sh_peak_resonance - peak_num))*peak_resonance_slope_sh)
+                # round to single decimal
+                default_start_peak_int_'peak_num' = round((temp*10))/10
+            endfor
+
+    # --------------------------------------------------#
+    #
+    #                  S endpoint  (sloped)
+    #
+        # peak 1
+        temp1 = 0 - ((abs(default_sh_peak_resonance - 1))*(peak_resonance_slope_s*upslope_multiplier))
+        # peak 2
+        temp2 = 0 - ((abs(default_sh_peak_resonance - 2))*(peak_resonance_slope_s*upslope_multiplier))
+
+        # pull Peak 1 toward -40 even if it is below -40
+        if preserve_lower_resonances == 1
+            if temp1 > -40
+                temp1 = (temp1 - 40)/2
+            endif
+            # but ensure that it is lower than ...
+            # (in the case that the slope is very shallow)
+            # pull Peak 2 toward -32 even if it is below -32
+            if temp2 > -32
+                temp2 = (temp2 -32)/2
+            endif
+        endif
+
+        # round to single decimal
+        default_end_peak_int_1 = round((temp1*10))/10
+        default_end_peak_int_2 = round((temp2*10))/10
+
+        # Set intensities of the main peaks using the slope value
+        for peak_num from 3 to num_peaks
+            # if resonance is below peak (lower frequency)
+            if peak_num < default_s_peak_resonance
+                temp = 0 - ((abs(default_s_peak_resonance - peak_num))*peak_resonance_slope_s)
+            else
+                # if the resonance is higher than the peak
+                # (e.g. resonance 8 when the peak resonance is #7), 
+                # then the slope is shallower (default is 3 dB / res.)
+                temp = 0 - ((abs(default_s_peak_resonance - peak_num))*peak_resonance_slope_s_upward)
+            endif
+
+            # round to single decimal
+            default_end_peak_int_'peak_num' = round((temp*10))/10
+        endfor
+            
+    # end conditional on if the spectrum shape is sloped
+    #======================================================================#
+    #
+    #                      CONTOURED SPECTRUM SHAPE
+    #
+    elsif spectral_shape$ == "contoured"
+        # 'sh' (also works for 'ch') 
+            default_start_peak_int_1 = -32
+            default_start_peak_int_2 = -18
+            default_start_peak_int_3 = 0
+            default_start_peak_int_4 = -6
+            default_start_peak_int_5 = -15
+            default_start_peak_int_6 = -9
+            default_start_peak_int_7 = -16
+            default_start_peak_int_8 = -22
+
+        # 's' 
+            # first four peaks fixed
+            default_end_peak_int_1 = -42
+            default_end_peak_int_2 = -32
+            default_end_peak_int_3 = -26
+            default_end_peak_int_4 = -28
+
+            # depending on value of default_s_peak_resonance...
+            if default_s_peak_resonance == 5
+                default_end_peak_int_5 =  0
+                default_end_peak_int_6 = -8
+                default_end_peak_int_7 = -12
+                default_end_peak_int_8 = -16
+            elsif default_s_peak_resonance == 6
+                default_end_peak_int_5 = -12
+                default_end_peak_int_6 = 0
+                default_end_peak_int_7 = -8
+                default_end_peak_int_8 = -16
+
+            elsif default_s_peak_resonance == 7
+                default_end_peak_int_5 = -24
+                default_end_peak_int_6 = -12
+                default_end_peak_int_7 =  0
+                default_end_peak_int_8 = -12
+
+            elsif default_s_peak_resonance == 8
+                default_end_peak_int_5 = -30
+                default_end_peak_int_6 = -24
+                default_end_peak_int_7 = -12
+                default_end_peak_int_8 =  0
+            endif
+
+    endif
+
+    #======================================================================#
+    #       / \          |
+    #     /     \       / \
+    #   /         \    /   \
+    #======================================================================#
+    #            CALCULATE                                                 #
+    #                  SPECTRUM                                            #
+    #                         PEAK                                         #
+    #                            SLOPES (peakiness)                        #
+    #======================================================================#
+    #======================================================================#
+
+    # peak peakiness
+    # (higher number is more peaky)
+    # 'sh' - end of the continuum
+    default_start_peak_db_oct_1 = 32
+    default_start_peak_db_oct_2 = 42
+    default_start_peak_db_oct_3 = 60
+    default_start_peak_db_oct_4 = 60
+    default_start_peak_db_oct_5 = 60
+    default_start_peak_db_oct_6 = 60
+    default_start_peak_db_oct_7 = 60
+    default_start_peak_db_oct_8 = 60
+
+    # 's' - end of the continuum
+    default_end_peak_db_oct_1 = 32
+    default_end_peak_db_oct_2 = 42
+    default_end_peak_db_oct_3 = 60
+    default_end_peak_db_oct_4 = 60
+    default_end_peak_db_oct_5 = 60
+    default_end_peak_db_oct_6 = 60
+    default_end_peak_db_oct_7 = 60
+    default_end_peak_db_oct_8 = 60
+
+
+    # align both endpoints to "sh" spectrum if fricative-affricate contrast 
+    if initialized_contrast$ == "sh-ch"
+        # take both values from the "sh" endpoint in the main script defaults
+        for peak from 1 to num_peaks
+            default_start_peak_int_'peak' = default_start_peak_int_'peak'
+            default_end_peak_int_'peak'   = default_start_peak_int_'peak'
+            default_start_peak_db_oct_'peak' = default_start_peak_db_oct_'peak'
+            default_end_peak_db_oct_'peak' = default_start_peak_db_oct_'peak'
+        endfor
+    endif
+endproc
+
+
+procedure set_options
+    # General options for the entire process
+
+    # convert from startup form
+    num_steps = number_of_continuum_steps
+
+    if num_steps < 2
+        exitScript: "Number of continuum steps must be at least 2"
+    endif
+
+    # detailed table name includes sound object name, which formant peak for s, and sh/s slope values
+        detailed_table_name_output = 1
+     
+     # detailed per-continuum-step label output
+        detailed_step_output = 0
+
+    # object name space separator
+        sep$ = "_"
+
+    # number of spectral peaks in the fricative (leave at 8)
+	    num_peaks = 8
+
+    # user manually sets F3
+    # (set to OFF, because F3 should be detected in the adjacent vowel)
+        user_set_F3 = 0  
+    
+    # samplerate for fricatives generated in isolation 
+    #   (gets overwritten if you analyze an existing sound
+    #   (in `analyze_vowel` procedure)
+        samplerate = 44100
+
+    # draw output spectra in the picture window
+        draw = 1
+	
+    # spectral smoothing option for obtaining fricative pectrum peak
+        peak_dB_smoothing = 50
+
+	# options for drawing fricative spectra
+        smoothing_for_drawing = 200
+        draw_Hz_low = 0
+        draw_Hz_high = 10000
+        drawDB_dynamic_range = 50
+        draw_peak_frequencies_on_graph = 1
+	
+    # cepstral smoothing reduces peak dB by about 10
+    # this re-adjusts for that on the measurement side. 
+        cepstral_smoothing_adjustment_dB = 10
+
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #                                                                  #
+    #       Default starting parameters for sh (start) and s (end)     #
+    #                                                                  #
+    #                                                                  #
+    #                                                                  #
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #
+    if initialize_phonetic_contrast$ == "start with sh-s parameters"
+        initialized_contrast$ = "sh-s"    
+    elsif initialize_phonetic_contrast$ == "start with sh-ch parameters"
+        initialized_contrast$ = "sh-ch"        
+    endif
+
+    # sh resonance is always F3
+    default_sh_peak_resonance = 3
+
+    # multiply the slope of attenuation
+    # for resonances in SH that are lower than the F3 frequency,
+    # so that it is a steeper slope up to the peak
+    upslope_multiplier = 3
+
+    # qqq this should be related to F2 somehow;
+    # if F2 is high then this should be lower
+    # if F2 & F3 are closer together, 
+    # this this multiplier should be shallower,
+    # to let the lower resonances ring 
+    #... unfortunately at this point,
+    # we do not yet know what that relationship would look like
+    # ( you are able to intercept the process to increase gain to F2
+    # during the script execution )
+
+    # similar concept for resonances that are higher in frequency
+    # than the peak resonance for s
+    # for frequencies *higher* than the peak, this controls the slope of that rolloff
+    # to be more steep
+    # 
+    peak_resonance_slope_s_upward = 3
+    #
+    # if the slope is steep enough that the lower resonances (1 & 2)
+    # are VERY low, this nudges them back up to preserve some spectral continuity
+    # with the vowel. Specifically, it arrives at the middle point between 
+    #  the computed dB and -32 dB relative to peak
+        preserve_lower_resonances = 1
+
+    #                                                                  #
+    #                                                                  #
+    #                                                                  #
+    #            End of default parameter section                      #
+    #                                                                  #
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+    #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+
+    # make a new noise to filter on each step
+        # not advised, since that could introduce 
+        # new spectrum fluctuations on each step
+        # that work against your intended parameters.
+        # By keeping this at zero,
+        # your parameters are imposed upon the same spectrum
+        # for each continuum step. 
+        new_noise_per_step = 0
+
+    # filter a pre-made sound instead of a new Gaussian noise
+    # not advised unless you're experimenting with weird stuff. 
+        use_premade_noise = 0
+        # if that is set to 1,
+        # then name your pre-made carrier sound here:
+        # (it should already be loaded up into your Obejcts list)
+        # this 
+        premade_noise$ = "tc"
+        # NOTE: this feature is currently removed,
+        # because a lot of work would be needed to check if the premade carrier
+        # would support the duration / envelope parameters
+        # and it probably isn't worth it. 
+        # it would be used in the case that you want a noise that has 
+        # some feature that can't be created by filtering white noise
+        # for example, periodicity. 
+
+    # you must manually verify F3 and F2 tracking
+        manual_check_spectrum = 1
+    
+    # user modifies specific values from the table, overriding property inheritance
+    # (this is overridden if selected at startup)
+        user_modify = 0
+    #--------------------------#
+    # duration of smooth blending between fricative and vowel segments
+    # to avoid abrupt transients at segment boundary
+        overlap_blend_dur_onset  = 0.005
+        overlap_blend_dur_offset = 0.005
+    
+    # demo vowel 
+    # (not used outside of development)
+        call_up_demo_sound = 0
+        demo_sound_path$ = "C:/Users/mwinn/Documents/PraatScripts/Fricative_Continuum/demo_audio/demo_words"
+        demo_sound_name$ = "seat_F411.wav"
+        if call_up_demo_sound == 1
+            nocheck Read from file: "'demo_sound_path$'\'demo_sound_name$'"
+        endif
+
+    # where the cursor goes when selecting vowel onset
+    # for vowel that follows the fricative
+    # (if you're preloading a sound, you can set this value
+    # to make it easier to run and re-run and re-run the script
+    # while avoiding manual clicking of that same time point )
+        auto_onset_time_landmark = 0.2068
+
+endproc
