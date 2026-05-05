@@ -136,3 +136,13 @@ You can take the simple CSV parameter table produced by the script and use the R
 
 #### Tutorial videos
 Coming soon :) 
+
+#### Why not proportional waveform blending?
+A common technique for creative fricative continua is to take two naturally produced sound (like sh and s) and mix them in  proporrtionally different amounts. For example, 100% sh, 0%s, then 80% sh and 20% s, then 60% sh and 40% s, and so on. 
+The problem is waveform blending modifies the sound pressure level on a linear scale, but we produce and perceive sound intensity on a logarithmic scale. 
+Halfway between 10 and 1000 is 505 in a linear scale, but it is 100 on a logarithmic scale. if these numbers were sound pressure levels, we would perceive the 100 to be in the middle, but the waveform blending technique would put 505 in the middle. And unfortunately, we cannot set up a proportional mix that is logarithmic because sh has some frequencies that have greater intensity than in s, but s have other frequencies that have higher intensity (so we would need a mixing proportion that is specific to each frequency). 
+
+<img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/waveform_blending_lin_log.png" align="center" width="429"/>
+
+Instead, we need to make sure that the difference in sound intensity *as expressed in decibels* is equally spaced for all frequencies across all steps in the continuum. That's what this praat script does (see images above, in the *Visualizing the output* section). 
+
