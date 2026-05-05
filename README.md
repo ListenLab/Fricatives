@@ -80,6 +80,7 @@ self-evident
 Currently, this script is set up to generate sounds that span the range from sh to s, or from sh to ch, in the way that a speaker of North American English woudl recognize them. You CAN tinker with the parameters to create other sounds, but these are the two phonetic contrasts that can be initiated by default with sensible values that will normally produce high-quality output. 
 
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/continuum_sh_s.png" align="center" width="429"/>
+
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/continuum_sh_ch.png" align="center" width="429"/>
 
 choosing this at the startup window initiates a set of parameter levels that will make it easy for you to create the target phonetic contrast you want. 
