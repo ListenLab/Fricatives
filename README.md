@@ -107,15 +107,19 @@ You can take the simple CSV parameter table produced by the script and use the R
  - basic spectrum:
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/1_px_continuum_spectrum_conv_demo.png" align="center" width="429"/>
 
+------------------------------------------------------------------------
 - basic spectrum with "noise" added to make it look more realistic:
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/2_px_continuum_spectrum_conv_noisy_demo.png" align="center" width="429"/>
 
+------------------------------------------------------------------------
 - add direct labels of where the peak resonances are in the spectrum:
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/3_px_continuum_spectrum_conv_noisy_plabel_demo.png" align="center" width="429"/>
 
+------------------------------------------------------------------------
 - the main x axis shows resonance number, with frequency axis on the top (this accurately reflects how the method treats the spectrum): 
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/4_px_continuum_spectrum_demo.png" align="center" width="429"/>
 
+------------------------------------------------------------------------
 - Show the individual components that are added together to make each spectrum shape: 
 <img src="https://raw.githubusercontent.com/ListenLab/Fricatives/main/images/5_px_continuum_peaks_and_spectra_demo.png" align="center" width="429"/>
 
