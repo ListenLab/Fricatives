@@ -34,10 +34,10 @@ With this script you can:
 
 # Video tutorials
 
-Full introduction to the script: <https://www.youtube.com/watch?v=kG2ytUvM8sE>
-Quick (one-minute) demonstration of the script: <https://www.youtube.com/watch?v=xPriSxEaL8o>
-Sloped vs Contoured spectral shapes: <https://www.youtube.com/watch?v=wcV6wBa-ZxA>
-Refining / replicating parameters: <https://www.youtube.com/watch?v=BFV2uApPb6c>
+-   Full introduction to the script: <https://www.youtube.com/watch?v=kG2ytUvM8sE>
+-   Quick (one-minute) demonstration of the script: <https://www.youtube.com/watch?v=xPriSxEaL8o>
+-   Sloped vs Contoured spectral shapes: <https://www.youtube.com/watch?v=wcV6wBa-ZxA>
+-   Refining / replicating parameters: <https://www.youtube.com/watch?v=BFV2uApPb6c>
 
 # How to call up and run the script
 
