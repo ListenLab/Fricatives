@@ -2395,25 +2395,25 @@ procedure calculate_spectral_shape
             # depending on value of default_s_peak_resonance...
             if default_s_peak_resonance == 5
                 default_end_peak_int_5 =  0
-                default_end_peak_int_6 = -8
-                default_end_peak_int_7 = -12
-                default_end_peak_int_8 = -16
+                default_end_peak_int_6 = -12
+                default_end_peak_int_7 = -18
+                default_end_peak_int_8 = -24
             elsif default_s_peak_resonance == 6
-                default_end_peak_int_5 = -12
+                default_end_peak_int_5 = -18
                 default_end_peak_int_6 = 0
-                default_end_peak_int_7 = -8
-                default_end_peak_int_8 = -16
+                default_end_peak_int_7 = -12
+                default_end_peak_int_8 = -20
 
             elsif default_s_peak_resonance == 7
-                default_end_peak_int_5 = -24
-                default_end_peak_int_6 = -12
+                default_end_peak_int_5 = -30
+                default_end_peak_int_6 = -18
                 default_end_peak_int_7 =  0
-                default_end_peak_int_8 = -12
+                default_end_peak_int_8 = -16
 
             elsif default_s_peak_resonance == 8
-                default_end_peak_int_5 = -30
-                default_end_peak_int_6 = -24
-                default_end_peak_int_7 = -12
+                default_end_peak_int_5 = -32
+                default_end_peak_int_6 = -28
+                default_end_peak_int_7 = -16
                 default_end_peak_int_8 =  0
             endif
 
